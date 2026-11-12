@@ -11,9 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Point this at wherever the action lives: OWNER/api-contract-sync@v0.1.0 once the
-      # repo is on GitHub, or ./tools/api-contract-sync if you vendor it into your repo.
-      - uses: OWNER/api-contract-sync@v0.1.0
+      # Or ./tools/api-contract-sync if you vendor the action into your repo.
+      - uses: krishanSKDA/api-contract-sync@v0.1.0
         with:
           backend: backend
           frontend: frontend/src

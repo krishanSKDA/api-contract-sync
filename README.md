@@ -71,7 +71,7 @@ values are listed as unresolved, not guessed.
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: OWNER/api-contract-sync@v0.1.0
+- uses: krishanSKDA/api-contract-sync@v0.1.0
   with:
     backend: backend
     frontend: frontend/src
