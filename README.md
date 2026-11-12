@@ -18,7 +18,7 @@ drift: 12 errors, 9 warnings
 ```
 
 It reads source code only. It doesn't need a running backend, a Java toolchain,
-Node, or an OpenAPI spec. It has no dependencies and runs on Python 3.9+.
+Node, or an OpenAPI spec. It has no dependencies and runs on Python 3.10+.
 
 ## Install
 
@@ -70,7 +70,7 @@ values are listed as unresolved, not guessed.
 ## GitHub Actions
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v7
 - uses: krishanSKDA/api-contract-sync@v0.1.0
   with:
     backend: backend

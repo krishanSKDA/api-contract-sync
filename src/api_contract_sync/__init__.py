@@ -9,7 +9,7 @@ from Python:
     files = render_client(contract)                      # {"types.ts": ..., "client.ts": ..., "index.ts": ...}
     findings = check(contract, "frontend/src")           # drift findings, most severe first
 
-Standard library only; Python 3.9+.
+Standard library only; Python 3.10+.
 """
 
 from __future__ import annotations

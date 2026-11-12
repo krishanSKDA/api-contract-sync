@@ -7,7 +7,7 @@ name = "api-contract-sync"
 dynamic = ["version"]
 description = "Detect drift between a Spring Boot backend and a TypeScript frontend, and generate a typed client from the Java code"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["spring-boot", "typescript", "api", "contract", "drift", "codegen", "jackson", "react", "ci"]

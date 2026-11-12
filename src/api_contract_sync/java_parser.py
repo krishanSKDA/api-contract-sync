@@ -6,7 +6,7 @@ any depth), their annotations, fields, methods, method parameters and generic
 type references. Method bodies are skipped wholesale, which is what keeps it
 fast and tolerant of syntax it does not model.
 
-Standard library only, so the skill runs anywhere Python 3.9+ does.
+Standard library only, so it runs anywhere Python 3.10+ does.
 """
 
 from __future__ import annotations

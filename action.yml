@@ -27,7 +27,7 @@ inputs:
     description: Extra arguments for the check command, e.g. "--context-path /pos --bigdecimal string --strict-nulls".
     default: ""
   python-version:
-    description: Python used to run the checker (3.9+).
+    description: Python used to run the checker (3.10+).
     default: "3.12"
 
 outputs:
@@ -38,7 +38,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
 
