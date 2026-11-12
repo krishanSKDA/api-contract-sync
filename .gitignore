@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv/
+# IDE builds of the Java test fixtures (e.g. VS Code's Java extension imports pom.xml)
+tests/fixtures/**/target/

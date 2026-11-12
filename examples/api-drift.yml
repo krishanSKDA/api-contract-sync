@@ -1,0 +1,22 @@
+# Copy to .github/workflows/api-drift.yml in a repo with a Spring backend and a TS frontend.
+name: API drift
+
+on:
+  pull_request:
+    paths: ["backend/**", "frontend/src/**"]
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Point this at wherever the action lives: OWNER/api-contract-sync@v0.1.0 once the
+      # repo is on GitHub, or ./tools/api-contract-sync if you vendor it into your repo.
+      - uses: OWNER/api-contract-sync@v0.1.0
+        with:
+          backend: backend
+          frontend: frontend/src
+          # generated-dir: frontend/src/api/generated   # if you commit the generated client
+          # fail-on: warning                             # stricter
+          # extra-args: --context-path /pos             # if Jackson/Spring is configured in Java code

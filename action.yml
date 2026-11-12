@@ -1,0 +1,94 @@
+name: API contract sync
+description: Fail the build when the TypeScript frontend drifts from the Spring Boot backend (and optionally when the generated client is stale).
+branding:
+  icon: git-pull-request
+  color: green
+
+inputs:
+  backend:
+    description: Spring Boot project root (or any directory of .java files).
+    required: true
+  frontend:
+    description: Frontend source directory that calls the backend, e.g. frontend/src.
+    required: true
+  fail-on:
+    description: Lowest severity that fails the step - error, warning or never.
+    default: error
+  generated-dir:
+    description: If you commit a generated client, its directory. The step then also fails when it is stale.
+    default: ""
+  client-fn:
+    description: Space-separated custom fetch wrappers, NAME or NAME:BASEPATH (e.g. "apiFetch:/api").
+    default: ""
+  exclude:
+    description: Space-separated frontend path prefixes or regexes to skip (e.g. "src/api/generated").
+    default: ""
+  extra-args:
+    description: Extra arguments for the check command, e.g. "--context-path /pos --bigdecimal string --strict-nulls".
+    default: ""
+  python-version:
+    description: Python used to run the checker (3.9+).
+    default: "3.12"
+
+outputs:
+  report:
+    description: Path of the markdown drift report.
+    value: ${{ steps.check.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install api-contract-sync
+      shell: bash
+      run: python -m pip install --quiet --disable-pip-version-check "${{ github.action_path }}"
+
+    - name: Check API drift
+      id: check
+      shell: bash
+      env:
+        BACKEND: ${{ inputs.backend }}
+        FRONTEND: ${{ inputs.frontend }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        CLIENT_FN: ${{ inputs.client-fn }}
+        EXCLUDE: ${{ inputs.exclude }}
+        EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        report="$RUNNER_TEMP/api-drift.md"
+        args=(check "$BACKEND" "$FRONTEND" --md "$report" --fail-on "$FAIL_ON" --github-annotations)
+        for f in $CLIENT_FN; do args+=(--client-fn "$f"); done
+        for e in $EXCLUDE; do args+=(--exclude "$e"); done
+        # shellcheck disable=SC2206
+        extra=($EXTRA_ARGS)
+        set +e
+        api-contract-sync "${args[@]}" "${extra[@]}"
+        code=$?
+        set -e
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        [ -f "$report" ] && cat "$report" >> "$GITHUB_STEP_SUMMARY"
+        exit $code
+
+    - name: Check generated client is up to date
+      if: ${{ inputs.generated-dir != '' }}
+      shell: bash
+      env:
+        BACKEND: ${{ inputs.backend }}
+        GENERATED_DIR: ${{ inputs.generated-dir }}
+        EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        # Only extraction options apply to generate; drop check-only flags from extra-args.
+        gen_extra=()
+        set -- $EXTRA_ARGS
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --context-path|--bigdecimal|--naming) gen_extra+=("$1" "$2"); shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        api-contract-sync generate "$BACKEND" -o "$GENERATED_DIR" --check "${gen_extra[@]}" || {
+          echo "::error title=API client out of date::Run 'api-contract-sync generate $BACKEND -o $GENERATED_DIR' and commit the result."
+          exit 1
+        }

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: windows-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests (source tree)
+        run: python -m unittest discover -s tests -v
+      - name: Install and smoke-test the CLI
+        shell: bash
+        run: |
+          python -m pip install .
+          api-contract-sync --version
+          api-contract-sync check tests/fixtures/shop-app/backend tests/fixtures/shop-app/frontend/src --no-fail --md drift.md
+          grep -q "9 errors" drift.md
+
+  action:
+    # Runs the composite action against the fixture; it must fail (planted drift).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: drift
+        uses: ./
+        continue-on-error: true
+        with:
+          backend: tests/fixtures/shop-app/backend
+          frontend: tests/fixtures/shop-app/frontend/src
+      - name: Expect failure
+        if: steps.drift.outcome != 'failure'
+        run: |
+          echo "the action should fail on the planted drift"
+          exit 1

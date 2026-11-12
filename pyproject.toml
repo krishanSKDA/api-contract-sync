@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api-contract-sync"
+dynamic = ["version"]
+description = "Detect drift between a Spring Boot backend and a TypeScript frontend, and generate a typed client from the Java code"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["spring-boot", "typescript", "api", "contract", "drift", "codegen", "jackson", "react", "ci"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Java",
+    "Programming Language :: JavaScript",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.scripts]
+api-contract-sync = "api_contract_sync.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "api_contract_sync.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
