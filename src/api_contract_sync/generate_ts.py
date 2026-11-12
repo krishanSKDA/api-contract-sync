@@ -2,7 +2,7 @@
 """Generate TypeScript types and a typed fetch client from a contract JSON.
 
 Usage:
-    python generate_ts.py <contract.json | backend-dir> -o frontend/src/api/generated
+    python generate_ts.py <backend-dir | openapi.json | contract.json> -o frontend/src/api/generated
            [--only CustomerController,ProductController] [--no-client] [--check]
 
 --check writes nothing and exits 1 if the files in the output directory differ from
@@ -60,7 +60,9 @@ def header(contract: dict) -> str:
     # Only the backend folder's name: an absolute path differs per machine and
     # would make committed generated files show up as changed in CI diffs.
     backend = str(contract.get("backend") or "?").replace("\\", "/").rstrip("/")
-    return HEADER.format(backend=backend.rsplit("/", 1)[-1] + "/")
+    last = backend.rsplit("/", 1)[-1]
+    is_file = contract.get("generator", "").endswith("extract_openapi.py")
+    return HEADER.format(backend=last if is_file else last + "/")
 
 
 class Gen:
@@ -146,9 +148,12 @@ class Gen:
             if p.get("writeOnly"):
                 continue
             out += self.doc(p.get("doc"), "  ")
-            null = " | null" if p["nullable"] else ""
+            if "optional" in p:  # OpenAPI source: "may be absent" and "may be null" are separate facts
+                q, null = ("?" if p["optional"] else ""), (" | null" if p.get("nullValue") else "")
+            else:  # Jackson writes every property, so "nullable" means an explicit null
+                q, null = "", (" | null" if p["nullable"] else "")
             ro = "readonly " if p.get("readOnly") else ""
-            out.append(f"  {ro}{prop_key(p['name'])}: {self.ts(p['type'])}{null};")
+            out.append(f"  {ro}{prop_key(p['name'])}{q}: {self.ts(p['type'])}{null};")
         out.append("}")
         if name in self.input_types:
             out.append("")
@@ -158,7 +163,10 @@ class Gen:
                 if p.get("readOnly"):
                     continue
                 optional = p["nullable"] or p.get("generated")
-                null = " | null" if p["nullable"] or p.get("generated") else ""
+                if "optional" in p:
+                    null = " | null" if p.get("nullValue") else ""
+                else:
+                    null = " | null" if p["nullable"] or p.get("generated") else ""
                 out.append(f"  {prop_key(p['name'])}{'?' if optional else ''}: {self.ts(p['type'], True)}{null};")
             out.append("}")
         return out
@@ -415,7 +423,8 @@ def render(contract: dict, only: set[str] | None = None, client: bool = True) ->
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("contract", type=Path, help="contract JSON from extract_spring.py, or the backend directory itself")
+    ap.add_argument("contract", type=Path,
+                    help="Spring backend directory, OpenAPI/Swagger file (any backend language), or a contract JSON")
     ap.add_argument("-o", "--out", type=Path, required=True, help="output directory (created if missing)")
     ap.add_argument("--only", help="comma-separated controller names to include in client.ts")
     ap.add_argument("--no-client", action="store_true", help="only write types.ts")
@@ -427,15 +436,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if not a.contract.exists():
         ap.error(f"{a.contract} does not exist")
-    if a.contract.is_dir():
-        try:
-            from .extract_spring import build_contract
-        except ImportError:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from extract_spring import build_contract  # noqa: E402
-        contract = build_contract(a.contract, a.bigdecimal, a.context_path, a.naming)
-    else:
-        contract = json.loads(a.contract.read_text(encoding="utf-8"))
+    try:
+        from .extract_openapi import load_any
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from extract_openapi import load_any  # noqa: E402
+    contract = load_any(a.contract, a.bigdecimal, a.context_path, a.naming)
     files = render(contract, set(a.only.split(",")) if a.only else None, not a.no_client)
 
     if a.check:

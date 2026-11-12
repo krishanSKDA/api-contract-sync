@@ -2,7 +2,7 @@
 """Detect drift between a Spring backend contract and a TypeScript frontend.
 
 Usage:
-    python check_drift.py <contract.json | backend-dir> <frontend-src-dir>
+    python check_drift.py <backend-dir | openapi.json | contract.json> <frontend-src-dir>
         [--md report.md] [--json report.json]
         [--strict-nulls] [--client-fn apiFetch[:/api]] [--exclude src/api/generated]
         [--fail-on error|warning|never] [--github-annotations] [--show-info]
@@ -15,7 +15,8 @@ What it checks
   by name     TS interfaces whose name equals a backend DTO/entity name
 
 Exit code 1 when any error-level finding exists (use in CI); --fail-on changes the
-threshold. Passing the backend directory instead of a contract extracts on the fly.
+threshold. A Spring backend directory is extracted on the fly; any other backend
+(FastAPI, NestJS, .NET, Go, ...) is checked through its OpenAPI/Swagger document.
 """
 
 from __future__ import annotations
@@ -184,9 +185,9 @@ class Checker:
         fmt = resp["format"]
         if fmt == "text" and (cs.reads_json or cs.response_evidence == "cast"):
             self.add("error", "text-as-json",
-                     f"{via} returns a plain String (text/plain) but the frontend parses it as JSON", loc,
+                     f"{via} returns plain text (text/plain) but the frontend parses it as JSON", loc,
                      self.be_loc(ep["source"]), via,
-                     hint="call response.text(), or return a record/Map from the controller")
+                     hint="call response.text(), or return a JSON object (in Spring: a record/Map instead of a bare String)")
             return
         if not cs.response_type:
             return
@@ -194,7 +195,7 @@ class Checker:
             fe_t = classify(cs.response_type)
             if fe_t["kind"] not in ("unknown", "null") and cs.response_evidence in ("cast", "generic"):
                 self.add("error", "no-response-body",
-                         f"{via} returns no body (void/ResponseEntity<Void>), but the frontend expects `{cs.response_type}`",
+                         f"{via} returns no body (void / 204), but the frontend expects `{cs.response_type}`",
                          loc, self.be_loc(ep["source"]), via)
             return
         weak = cs.response_evidence == "return type"
@@ -213,12 +214,12 @@ class Checker:
         body = ep.get("body")
         sent = cs.body_type or cs.body_keys is not None
         if sent and not body and cs.body_evidence != "multipart":
-            self.add("warning", "body-ignored", f"{via} has no @RequestBody; the JSON body sent here is ignored",
+            self.add("warning", "body-ignored", f"{via} takes no request body (no @RequestBody); the JSON body sent here is ignored",
                      loc, self.be_loc(ep["source"]), via)
             return
         if body and body["required"] and not sent and cs.body_evidence != "multipart" and cs.method in ("POST", "PUT", "PATCH"):
             if cs.client == "fetch" and cs.body_evidence is None:
-                self.add("warning", "body-missing", f"{via} requires a JSON body (@RequestBody) but none is sent here",
+                self.add("warning", "body-missing", f"{via} requires a JSON request body but none is sent here",
                          loc, self.be_loc(ep["source"]), via)
             return
         if not body:
@@ -534,9 +535,9 @@ def render_md(ch: Checker, show_info: bool) -> str:
             line = f"- **[{f.code}]** {f.message}"
             locs = []
             if f.frontend:
-                locs.append(f"TS `{f.frontend}`")
+                locs.append(f"Frontend `{f.frontend}`")
             if f.backend:
-                locs.append(f"Java `{f.backend}`")
+                locs.append(f"Backend `{f.backend}`")
             if locs:
                 line += "  \n  " + " · ".join(locs)
             if f.via:
@@ -571,25 +572,24 @@ def github_annotations(findings: list[Finding], frontend_root: Path) -> list[str
             file, _, line = f.frontend.rpartition(":")
             path = (frontend_root / file).as_posix() if file else f.frontend
             props[:0] = [f"file={_gh_escape(path, True)}"] + ([f"line={line}"] if line.isdigit() else [])
-        msg = f.message + (f" (Java: {f.backend})" if f.backend else "") + (f" Hint: {f.hint}" if f.hint else "")
+        msg = f.message + (f" (backend: {f.backend})" if f.backend else "") + (f" Hint: {f.hint}" if f.hint else "")
         out.append(f"::{level[f.severity]} {','.join(props)}::{_gh_escape(msg)}")
     return out
 
 
 def load_contract(source: Path, bigdecimal=None, context_path=None, naming=None) -> dict:
-    """A contract JSON file, or a backend directory to extract one from on the fly."""
-    if source.is_dir():
-        try:
-            from .extract_spring import build_contract
-        except ImportError:
-            from extract_spring import build_contract  # noqa: E402
-        return build_contract(source, bigdecimal, context_path, naming)
-    return json.loads(source.read_text(encoding="utf-8"))
+    """A backend directory, an OpenAPI/Swagger document, or a saved contract JSON."""
+    try:
+        from .extract_openapi import load_any
+    except ImportError:
+        from extract_openapi import load_any  # noqa: E402
+    return load_any(source, bigdecimal, context_path, naming)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("contract", type=Path, help="contract JSON from extract_spring.py, or the backend directory itself")
+    ap.add_argument("contract", type=Path,
+                    help="Spring backend directory, OpenAPI/Swagger file (any backend language), or a contract JSON")
     ap.add_argument("frontend", type=Path, help="frontend source directory (e.g. frontend/src)")
     ap.add_argument("--md", type=Path, help="write the markdown report here (default: stdout)")
     ap.add_argument("--json", type=Path, help="also write findings as JSON")

@@ -16,12 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if (ROOT / "scripts" / "check_drift.py").exists():  # skill layout
     sys.path.insert(0, str(ROOT / "scripts"))
     import check_drift
+    import extract_openapi
     import extract_spring
     import generate_ts
     import ts_parser
 else:  # package layout (src/ checkout or installed)
     sys.path.insert(0, str(ROOT / "src"))
-    from api_contract_sync import check_drift, extract_spring, generate_ts, ts_parser
+    from api_contract_sync import check_drift, extract_openapi, extract_spring, generate_ts, ts_parser
 
 Checker = check_drift.Checker
 build_contract = extract_spring.build_contract
@@ -160,6 +161,158 @@ class ErpDriftTest(unittest.TestCase):
     def test_decoys_not_flagged(self):
         for needle in ("tracking_no", "Discount", "Payment.amount", "TaxRate"):          # D1-D4
             self.assertFalse([f for f in self.f if needle in f.message], needle)
+
+
+class JsFrontendTest(unittest.TestCase):
+    """Plain JS, Vue SFC and Svelte frontends against the shop-app backend."""
+
+    @classmethod
+    def setUpClass(cls):
+        fe = TsProject(ROOT / "tests" / "fixtures" / "shop-app-js" / "src", [], {})
+        cls.files = sorted(f.rel for f in fe.files)
+        ch = Checker(build_contract(FIXTURE / "backend"), fe, strict_nulls=False)
+        ch.run()
+        cls.f = list(ch.findings.values())
+
+    def hit(self, code, needle):
+        return [f for f in self.f if f.code == code and needle in (f.message + (f.frontend or ""))]
+
+    def test_files_scanned(self):
+        # test files, minified files and public/ are skipped
+        self.assertEqual(self.files, ["api/orders.js", "components/CustomerSearch.svelte", "components/OrderList.vue"])
+
+    def test_js_findings(self):
+        self.assertTrue(self.hit("method-mismatch", "api/orders.js:20"))
+        self.assertTrue(self.hit("endpoint-missing", "/cancel"))
+        self.assertTrue(self.hit("text-as-json", "/receipt"))
+        self.assertTrue(self.hit("field-ignored", "items"))
+
+    def test_vue_script_only_with_original_lines(self):
+        self.assertTrue(self.hit("endpoint-missing", "components/OrderList.vue:17"))     # /api/customer typo
+        self.assertFalse([f for f in self.f if "not-a-call" in f.message])                # fetch text in <template>
+        self.assertFalse([f for f in self.f if "OrderList.vue" in (f.frontend or "") and "status" in f.message])
+
+    def test_svelte_call_matched(self):
+        self.assertFalse([f for f in self.f if "CustomerSearch" in (f.frontend or "")])
+        self.assertEqual(len([f for f in self.f if f.severity == "error"]), 4)
+
+
+class KotlinTest(unittest.TestCase):
+    """The shop backend rewritten in Kotlin must yield the same drift as the Java one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.c = build_contract(ROOT / "tests" / "fixtures" / "shop-app-kotlin" / "backend")
+        ch = Checker(cls.c, TsProject(FIXTURE / "frontend" / "src", [], {}), strict_nulls=False)
+        ch.run()
+        cls.f = list(ch.findings.values())
+
+    def test_same_endpoints_as_java(self):
+        java = build_contract(FIXTURE / "backend")
+        self.assertEqual({(e["method"], e["path"]) for e in self.c["endpoints"]},
+                         {(e["method"], e["path"]) for e in java["endpoints"]})
+        ep = {(e["method"], e["path"]): e for e in self.c["endpoints"]}
+        self.assertEqual(ep[("GET", "/api/orders")]["response"]["type"]["kind"], "page")
+        self.assertEqual(ep[("GET", "/api/orders/{id}/receipt")]["response"]["format"], "text")
+        self.assertEqual(ep[("DELETE", "/api/orders/{id}")]["response"]["format"], "none")
+        self.assertEqual(ep[("DELETE", "/api/orders/{id}")]["pathParams"][0]["name"], "id")
+        status = next(q for q in ep[("GET", "/api/orders")]["queryParams"] if q["name"] == "status")
+        self.assertFalse(status["required"])  # OrderStatus? -> optional
+
+    def test_kotlin_properties(self):
+        props = {p["name"]: p for p in self.c["types"]["Order"]["properties"]}
+        self.assertNotIn("internalNote", props)        # @field:JsonIgnore
+        self.assertNotIn("auditTrail", props)          # private
+        self.assertIn("itemCount", props)              # computed getter
+        self.assertTrue(props["id"]["generated"])
+        self.assertEqual(props["customerName"]["nonNullBecause"], "Kotlin non-null type")
+        self.assertEqual(self.c["types"]["OrderStatus"]["values"], ["PENDING", "PAID", "SHIPPED", "CANCELLED"])
+        req = {p["name"]: p for p in self.c["types"]["CreateOrderRequest"]["properties"]}
+        self.assertEqual(list(req), ["customerName", "lines", "note"])
+        self.assertTrue(req["note"]["nullable"])
+
+    def test_same_errors_as_java(self):
+        errors = sorted(f.code for f in self.f if f.severity == "error")
+        self.assertEqual(errors, sorted(["endpoint-missing", "enum-mismatch", "field-not-sent", "field-not-sent",
+                                         "method-mismatch", "page-vs-array", "text-as-json", "type-mismatch",
+                                         "type-mismatch"]))
+        self.assertTrue([f for f in self.f if f.code == "required-field-missing" and "lines" in f.message])
+
+
+class AngularTest(unittest.TestCase):
+    """HttpClient via constructor injection and inject(), class-field base URLs, environment prefixes."""
+
+    @classmethod
+    def setUpClass(cls):
+        fe = TsProject(ROOT / "tests" / "fixtures" / "shop-app-angular" / "src", [], {})
+        cls.calls = fe.calls
+        ch = Checker(build_contract(FIXTURE / "backend"), fe, strict_nulls=False)
+        ch.run()
+        cls.f = [f for f in ch.findings.values() if f.severity != "info"]
+
+    def test_calls_resolved(self):
+        self.assertEqual(len(self.calls), 8)
+        self.assertTrue(all(c.path for c in self.calls), [c.raw_url for c in self.calls if not c.path])
+        self.assertTrue(all(c.client.startswith("angular:") for c in self.calls))
+
+    def test_findings(self):
+        got = sorted((f.code, (f.frontend or "").split(":")[-1]) for f in self.f)
+        self.assertEqual(got, [("field-ignored", "39"), ("field-not-sent", "10"), ("method-mismatch", "43"),
+                               ("page-vs-array", "31"), ("text-as-json", "47")])
+
+
+class OpenApiTest(unittest.TestCase):
+    """Non-Java backends via OpenAPI: a FastAPI-style 3.1 spec of the shop API, and Swagger 2.0."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.oa = ROOT / "tests" / "fixtures" / "openapi"
+        cls.contract = extract_openapi.load_any(cls.oa / "shop-fastapi.json")
+        ch = Checker(cls.contract, TsProject(FIXTURE / "frontend" / "src", [], {}), strict_nulls=False)
+        ch.run()
+        cls.f = list(ch.findings.values())
+
+    def has(self, code, needle):
+        self.assertTrue([f for f in self.f if f.code == code and needle in f.message],
+                        f"{code} {needle!r}:\n" + "\n".join(f"{f.code} {f.message}" for f in self.f))
+
+    def test_same_bugs_found_through_openapi(self):
+        self.has("field-not-sent", "customer_name")
+        self.has("method-mismatch", "PATCH")
+        self.has("endpoint-missing", "/cancel")
+        self.has("text-as-json", "/receipt")
+        self.has("type-mismatch", "Order.total")
+        self.has("enum-mismatch", "REFUNDED")
+        self.has("field-not-sent", "phone")
+        self.has("type-mismatch", "OrderPage")            # array in TS, page object in the spec
+
+    def test_contract_shape(self):
+        eps = {(e["method"], e["path"]): e for e in self.contract["endpoints"]}
+        self.assertEqual(eps[("DELETE", "/api/orders/{id}")]["response"]["format"], "none")
+        self.assertEqual(eps[("GET", "/api/orders/{id}/receipt")]["response"]["format"], "text")
+        self.assertEqual(eps[("GET", "/api/customers")]["response"]["type"]["kind"], "array")   # alias inlined
+        self.assertNotIn("CustomerList", self.contract["types"])
+        props = {p["name"]: p for p in self.contract["types"]["CreateOrderRequest"]["properties"]}
+        self.assertTrue(props["note"]["optional"] and props["note"]["nullValue"])
+        self.assertFalse(props["customerName"]["nullable"])
+
+    def test_swagger2(self):
+        c = extract_openapi.load_any(self.oa / "petstore-swagger2.json")
+        eps = {(e["method"], e["path"]): e for e in c["endpoints"]}
+        self.assertEqual(set(eps), {("GET", "/v1/pets"), ("POST", "/v1/pets"), ("DELETE", "/v1/pets/{petId}")})
+        self.assertEqual(eps[("POST", "/v1/pets")]["body"]["type"], {"kind": "ref", "name": "Pet"})
+        self.assertEqual(eps[("GET", "/v1/pets")]["response"]["type"]["kind"], "array")
+        self.assertEqual(c["types"]["PetStatus"]["values"], ["available", "pending", "sold"])
+        types = Gen(c).types_ts()
+        self.assertIn("  id?: number;", types)
+        self.assertIn("  name: string;", types)
+
+    def test_rejects_unknown_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "x.json"
+            p.write_text('{"hello": 1}', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                extract_openapi.load_any(p)
 
 
 class GenerateTest(unittest.TestCase):

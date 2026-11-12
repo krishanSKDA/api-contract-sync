@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "api-contract-sync"
 dynamic = ["version"]
-description = "Detect drift between a Spring Boot backend and a TypeScript frontend, and generate a typed client from the Java code"
+description = "Detect drift between a backend (Spring Boot Java/Kotlin, or any OpenAPI spec) and a JS/TS frontend, and generate a typed TypeScript client"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["spring-boot", "typescript", "api", "contract", "drift", "codegen", "jackson", "react", "ci"]
+keywords = ["spring-boot", "kotlin", "openapi", "typescript", "javascript", "api", "contract", "drift", "codegen",
+            "jackson", "react", "vue", "angular", "fastapi", "nestjs", "ci"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

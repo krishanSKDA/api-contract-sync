@@ -64,7 +64,7 @@ FRAMEWORK_PARAMS = {
 }
 INJECTED_ANNOTATIONS = {"AuthenticationPrincipal", "CurrentSecurityContext", "SessionAttribute",
                         "RequestAttribute", "Value", "CookieValue"}
-NOT_NULL_ANNOTATIONS = {"NotNull", "NotBlank", "NotEmpty", "NonNull", "Nonnull", "Id"}
+NOT_NULL_ANNOTATIONS = {"NotNull", "NotBlank", "NotEmpty", "NonNull", "Nonnull", "Id", "KotlinNonNull"}
 LOMBOK_GETTERS = {"Data", "Getter", "Value"}
 LOMBOK_SETTERS = {"Data", "Setter"}
 
@@ -345,7 +345,7 @@ class Extractor:
         if ref.name in PRIMITIVES and not ref.dims:
             nullable, why = False, "primitive"
         elif nn is not None:
-            nullable, why = False, f"@{nn.name}"
+            nullable, why = False, ("Kotlin non-null type" if nn.name == "KotlinNonNull" else f"@{nn.name}")
         else:
             col = find_ann(anns, "Column") or find_ann(anns, "JoinColumn")
             m2o = find_ann(anns, "ManyToOne") or find_ann(anns, "OneToOne")
@@ -531,10 +531,23 @@ class Extractor:
 
 
 def find_java_root(path: Path) -> Path:
-    for cand in (path / "src" / "main" / "java", path / "backend" / "src" / "main" / "java"):
-        if cand.is_dir():
-            return cand
+    """Source root: src/main/java, src/main/kotlin, or src/main when a project has both."""
+    for base in (path, path / "backend"):
+        main = base / "src" / "main"
+        java, kotlin = (main / "java").is_dir(), (main / "kotlin").is_dir()
+        if java and kotlin:
+            return main
+        if java or kotlin:
+            return main / ("java" if java else "kotlin")
     return path
+
+
+def resources_root(src_root: Path, backend: Path) -> Path:
+    if src_root.name in ("java", "kotlin"):
+        return src_root.parent / "resources"
+    if src_root.name == "main" and (src_root / "resources").is_dir():
+        return src_root / "resources"
+    return backend
 
 
 def detect_settings(path: Path) -> dict:
@@ -563,7 +576,7 @@ def detect_settings(path: Path) -> dict:
 def build_contract(backend: Path, bigdecimal: str | None = None, context_path: str | None = None,
                    naming: str | None = None) -> dict:
     java_root = find_java_root(backend)
-    res_root = java_root.parent / "resources" if java_root.name == "java" else backend
+    res_root = resources_root(java_root, backend)
     detected = detect_settings(res_root)
     context_path = context_path if context_path is not None else detected.get("context_path", "")
     naming = naming or detected.get("naming", "camel")

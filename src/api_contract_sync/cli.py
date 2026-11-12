@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import sys
 
-from . import __version__, check_drift, extract_spring, generate_ts
+from pathlib import Path
+
+from . import __version__, check_drift, extract_openapi, extract_spring, generate_ts
+
+
+def extract(argv: list[str]) -> int:
+    """Spring directory -> extract_spring; a file -> extract_openapi."""
+    first = next((a for a in argv if not a.startswith("-")), None)
+    if first and Path(first).is_file():
+        return extract_openapi.main(argv)
+    return extract_spring.main(argv)
+
 
 COMMANDS = {
-    "extract": (extract_spring.main, "Spring backend -> contract JSON"),
-    "generate": (generate_ts.main, "contract or backend -> TypeScript types + typed fetch client"),
-    "check": (check_drift.main, "contract or backend + frontend/src -> drift report (exit 1 on errors)"),
+    "extract": (extract, "Spring backend dir or OpenAPI file -> contract JSON"),
+    "generate": (generate_ts.main, "backend / OpenAPI / contract -> TypeScript types + typed fetch client"),
+    "check": (check_drift.main, "backend / OpenAPI / contract + frontend src -> drift report (exit 1 on errors)"),
 }
 
 USAGE = f"""usage: api-contract-sync <command> [options]
@@ -20,7 +31,8 @@ commands:
 {chr(10).join(f"  {name:<9} {desc}" for name, (_, desc) in COMMANDS.items())}
 
 examples:
-  api-contract-sync check backend frontend/src
+  api-contract-sync check backend frontend/src                 # Spring Boot (Java) source
+  api-contract-sync check openapi.json frontend/src            # any backend that exports OpenAPI
   api-contract-sync check backend frontend/src --github-annotations --md drift.md
   api-contract-sync generate backend -o frontend/src/api/generated
   api-contract-sync generate backend -o frontend/src/api/generated --check

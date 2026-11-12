@@ -1,4 +1,8 @@
-"""Lightweight TypeScript scanner for drift detection.
+"""Lightweight TypeScript / JavaScript scanner for drift detection.
+
+Reads .ts/.tsx/.mts/.cts, plain .js/.jsx/.mjs/.cjs, and the <script> blocks of
+.vue and .svelte files. Plain JavaScript has no types, so for it only URL, method,
+text-vs-JSON and request-body-key checks apply.
 
 Finds, across a frontend source tree:
   * interface / type-alias declarations and their members
@@ -347,11 +351,27 @@ class FuncSpan:
     return_type: str | None
 
 
+FRONTEND_GLOBS = ("*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.vue", "*.svelte")
+_SKIP_FILE = re.compile(r"\.(test|spec|stories|e2e|cy)\.\w+$|\.d\.[mc]?ts$|\.min\.js$|(^|[./])config\.[mc]?[jt]s$")
+
+
+def script_blocks_only(src: str) -> str:
+    """Keep only the <script> contents of a .vue/.svelte file. Everything else becomes
+    spaces (newlines kept), so offsets and line numbers still match the original file."""
+    keep = [False] * len(src)
+    for m in re.finditer(r"<script\b[^>]*>(.*?)</script\s*>", src, re.S | re.I):
+        for k in range(m.start(1), m.end(1)):
+            keep[k] = True
+    return "".join(c if keep[k] or c == "\n" else " " for k, c in enumerate(src))
+
+
 class TsFile:
     def __init__(self, path: Path, root: Path):
         self.path = path
         self.rel = str(path.relative_to(root)).replace("\\", "/")
         self.src = path.read_text(encoding="utf-8", errors="replace")
+        if path.suffix in (".vue", ".svelte"):
+            self.src = script_blocks_only(self.src)
         self.nc, self.fm = mask_ts(self.src)
         self.decls: list[TsDecl] = []
         self.consts: dict[str, str] = {}
@@ -394,7 +414,9 @@ class TsFile:
                 self.decls.append(TsDecl(m.group(1), self.rel, line, None, alias_text=text))
 
     def _consts(self) -> None:
-        for m in re.finditer(r"\b(?:const|let|var)\s+(" + IDENT + r")\s*(?::\s*string\s*)?=\s*(['\"`])", self.nc):
+        # module/function constants, and class fields (`private api = '/api/orders'`, used as this.api)
+        decl = r"(?:\b(?:const|let|var)\s+|^[ \t]*(?:(?:private|public|protected|readonly|static)\s+)+)"
+        for m in re.finditer(decl + r"(" + IDENT + r")\s*(?::\s*string\s*)?=\s*(['\"`])", self.nc, re.M):
             q = m.group(2)
             start = m.end()
             end = self.nc.find(q, start) if q != "`" else self._template_end(start)
@@ -498,13 +520,13 @@ class TsProject:
     def __init__(self, root: Path, exclude: list[str], extra_clients: dict[str, str]):
         self.root = root
         self.files: list[TsFile] = []
-        skip_dirs = {"node_modules", "dist", "build", ".next", "coverage", "out", ".git"}
-        for p in sorted(list(root.rglob("*.ts")) + list(root.rglob("*.tsx"))):
+        skip_dirs = {"node_modules", "dist", "build", ".next", ".nuxt", ".svelte-kit", "coverage", "out", ".git",
+                     "public", "vendor", "__tests__", "__mocks__", "e2e", "cypress"}
+        paths = {p for g in FRONTEND_GLOBS for p in root.rglob(g)}
+        for p in sorted(paths):
             rel = p.relative_to(root)
             rel_s = str(rel).replace("\\", "/")
-            if set(rel.parts) & skip_dirs or p.name.endswith(".d.ts"):
-                continue
-            if re.search(r"\.(test|spec|stories)\.tsx?$", p.name) or "__tests__" in rel.parts or "__mocks__" in rel.parts:
+            if set(rel.parts) & skip_dirs or _SKIP_FILE.search(p.name):
                 continue
             if any(rel_s.startswith(e.strip("/")) or re.search(e, rel_s) for e in exclude if e):
                 continue
@@ -568,6 +590,7 @@ class TsProject:
         """Expression -> URL string with PLACEHOLDERs, and whether it was resolved at all."""
         expr = expr.strip()
         expr = re.sub(r"\s+as\s+const$", "", expr)
+        expr = re.sub(r"^this\.(?=" + IDENT + r"$)", "", expr)  # this.apiUrl -> class field apiUrl
         if not expr:
             return None, False
         parts = split_top(expr, "+")
@@ -588,7 +611,7 @@ class TsProject:
                     while j < len(body) and depth:
                         depth += {"{": 1, "}": -1}.get(body[j], 0)
                         j += 1
-                    inner = body[i + 2:j - 1].strip()
+                    inner = re.sub(r"^this\.", "", body[i + 2:j - 1].strip())
                     if re.fullmatch(IDENT, inner) and inner in (f.consts | self.global_consts):
                         s, ok = self._resolve_expr(f, (f.consts.get(inner) or self.global_consts[inner]))
                         out += s if ok and s is not None else PLACEHOLDER
@@ -627,10 +650,18 @@ class TsProject:
             name = m.group(1)
             base = self.extra_clients.get(name, "") if name != "fetch" else ""
             self._add_call(f, m.start(), i, name, base, None, generic)
+        # Angular: fields typed HttpClient (constructor injection) or set from inject(HttpClient)
+        ng = set()
+        if "HttpClient" in nc:
+            ng = set(re.findall(r"(" + IDENT + r")\s*:\s*HttpClient\b", nc)) | \
+                set(re.findall(r"(" + IDENT + r")\s*=\s*inject\s*\(\s*HttpClient\s*\)", nc))
         for m in re.finditer(r"(?<![\w$])(" + IDENT + r")\s*\.\s*(" + verbs + r")\s*(?=[<(])", fm):
             inst, verb = m.group(1), m.group(2)
-            if inst not in instances:
+            angular = inst in ng and inst not in instances
+            if not angular and inst not in instances:
                 continue
+            if angular and verb == "request":
+                continue  # HttpClient.request(method, url, ...) is rare; not modelled
             i = m.end()
             generic = None
             if fm[i] == "<":
@@ -640,6 +671,9 @@ class TsProject:
             while i < len(fm) and fm[i].isspace():
                 i += 1
             if fm[i] != "(":
+                continue
+            if angular:
+                self._add_call(f, m.start(), i, f"angular:{inst}", "", verb.upper(), generic)
                 continue
             base = self.axios_instances.get(inst, "")
             self._add_call(f, m.start(), i, f"axios:{inst}", base, verb.upper() if verb != "request" else None, generic)
@@ -652,7 +686,8 @@ class TsProject:
             return
         url_expr = args[0].strip()
         opts = args[1] if len(args) > 1 else ""
-        if client == "fetch" or not client.startswith("axios:"):
+        lib_style = client.startswith(("axios:", "angular:"))  # method from the verb, body as 2nd argument
+        if not lib_style:
             mm = re.search(r"\bmethod\s*:\s*(['\"`])(\w+)\1", opts)
             if mm:
                 method = mm.group(2).upper()
@@ -678,6 +713,10 @@ class TsProject:
         window_end = close + nxt.start() if nxt else seg_end
         window = _blank_error_paths(nc[close:window_end], fm[close:window_end])
         cs.reads_json = ".json()" in window
+        if client.startswith("angular:"):
+            # HttpClient parses the body as JSON unless the options say responseType: 'text' / 'blob' / ...
+            opt_text = args[2] if method in ("POST", "PUT", "PATCH") and len(args) > 2 else opts
+            cs.reads_json = not re.search(r"responseType\s*:\s*['\"](text|blob|arraybuffer)['\"]", opt_text or "")
         if generic:
             cs.response_type, cs.response_evidence = generic, "generic"
         else:
@@ -694,7 +733,7 @@ class TsProject:
                     cs.response_type, cs.response_evidence = (pm.group(1).strip() if pm else rt), "return type"
         # ---- body evidence
         body_expr = None
-        if client == "fetch" or not client.startswith("axios:"):
+        if not lib_style:
             bm = re.search(r"\bbody\s*:\s*JSON\.stringify\s*\(", opts)
             if bm:
                 o = bm.end() - 1

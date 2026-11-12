@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = ["java_parser.py", "ts_parser.py", "extract_spring.py", "generate_ts.py", "check_drift.py"]
+MODULES = ["java_parser.py", "kotlin_parser.py", "ts_parser.py", "extract_spring.py", "extract_openapi.py",
+           "generate_ts.py", "check_drift.py"]
 TREES = ["tests/fixtures"]
 FILES = ["tests/test_pipeline.py"]
 IGNORE = shutil.ignore_patterns("__pycache__", "target", "node_modules")

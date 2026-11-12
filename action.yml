@@ -1,12 +1,12 @@
 name: API contract sync
-description: Fail the build when the TypeScript frontend drifts from the Spring Boot backend (and optionally when the generated client is stale).
+description: Fail the build when the JS/TS frontend drifts from the backend (Spring Boot source or any OpenAPI spec), and optionally when the generated client is stale.
 branding:
   icon: git-pull-request
   color: green
 
 inputs:
   backend:
-    description: Spring Boot project root (or any directory of .java files).
+    description: Spring Boot project root (Java or Kotlin), or the path of an OpenAPI/Swagger file for any other backend.
     required: true
   frontend:
     description: Frontend source directory that calls the backend, e.g. frontend/src.

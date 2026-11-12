@@ -669,12 +669,18 @@ class JavaProject:
         self.root = root
         self.files: list[JavaFile] = []
         self.errors: list[str] = []
-        for p in sorted(root.rglob("*.java")):
+        kt_files = sorted(root.rglob("*.kt"))
+        if kt_files:
+            try:
+                from .kotlin_parser import KotlinFile
+            except ImportError:
+                from kotlin_parser import KotlinFile  # noqa: E402
+        for p in sorted(root.rglob("*.java")) + kt_files:
             parts = set(p.relative_to(root).parts)
             if parts & set(exclude):
                 continue
             try:
-                self.files.append(JavaFile(p, root))
+                self.files.append(KotlinFile(p, root) if p.suffix == ".kt" else JavaFile(p, root))
             except Exception as e:  # keep going; one odd file shouldn't sink the run
                 self.errors.append(f"{p}: {e}")
         self.by_fqn: dict[str, JType] = {}

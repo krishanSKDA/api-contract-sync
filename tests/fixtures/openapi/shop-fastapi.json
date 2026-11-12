@@ -1,0 +1,136 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Shop API (FastAPI)", "version": "1.0.0" },
+  "paths": {
+    "/api/orders": {
+      "get": {
+        "tags": ["orders"],
+        "summary": "List orders, newest first",
+        "operationId": "listOrders",
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "anyOf": [{ "$ref": "#/components/schemas/OrderStatus" }, { "type": "null" }] } },
+          { "name": "page", "in": "query", "required": false, "schema": { "type": "integer", "default": 0 } },
+          { "name": "size", "in": "query", "required": false, "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderPage" } } } }
+        }
+      },
+      "post": {
+        "tags": ["orders"],
+        "operationId": "createOrder",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrderRequest" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+          "422": { "description": "Validation Error" }
+        }
+      }
+    },
+    "/api/orders/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+      "get": {
+        "tags": ["orders"],
+        "operationId": "getOrder",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } } }
+      },
+      "delete": {
+        "tags": ["orders"],
+        "operationId": "deleteOrder",
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/api/orders/{id}/status": {
+      "patch": {
+        "tags": ["orders"],
+        "operationId": "changeStatus",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusChange" } } } },
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } } }
+      }
+    },
+    "/api/orders/{id}/receipt": {
+      "get": {
+        "tags": ["orders"],
+        "operationId": "receipt",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Receipt", "content": { "text/plain": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/api/customers": {
+      "get": {
+        "tags": ["customers"],
+        "operationId": "searchCustomers",
+        "parameters": [{ "name": "q", "in": "query", "required": false, "schema": { "type": "string", "default": "" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerList" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "OrderStatus": { "type": "string", "enum": ["PENDING", "PAID", "SHIPPED", "CANCELLED"] },
+      "OrderLine": {
+        "type": "object",
+        "required": ["id", "sku", "quantity", "unitPrice"],
+        "properties": {
+          "id": { "type": "integer" },
+          "sku": { "type": "string" },
+          "quantity": { "type": "integer" },
+          "unitPrice": { "type": "number" }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "required": ["id", "customerName", "total", "status", "createdAt", "lines", "paid"],
+        "properties": {
+          "id": { "type": "integer", "readOnly": true },
+          "customerName": { "type": "string" },
+          "total": { "type": "number" },
+          "status": { "$ref": "#/components/schemas/OrderStatus" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lines": { "type": "array", "items": { "$ref": "#/components/schemas/OrderLine" } },
+          "paid": { "type": "boolean" }
+        }
+      },
+      "OrderPage": {
+        "type": "object",
+        "required": ["content", "totalElements"],
+        "properties": {
+          "content": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } },
+          "totalElements": { "type": "integer" }
+        }
+      },
+      "LineRequest": {
+        "type": "object",
+        "required": ["sku", "quantity"],
+        "properties": { "sku": { "type": "string" }, "quantity": { "type": "integer" } }
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "required": ["customerName", "lines"],
+        "properties": {
+          "customerName": { "type": "string" },
+          "lines": { "type": "array", "items": { "$ref": "#/components/schemas/LineRequest" } },
+          "note": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+        }
+      },
+      "StatusChange": {
+        "type": "object",
+        "required": ["status"],
+        "properties": { "status": { "$ref": "#/components/schemas/OrderStatus" } }
+      },
+      "CustomerDto": {
+        "type": "object",
+        "required": ["id", "fullName", "loyaltyPoints"],
+        "properties": {
+          "id": { "type": "integer" },
+          "fullName": { "type": "string" },
+          "email": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "loyaltyPoints": { "type": "integer" }
+        }
+      },
+      "CustomerList": { "type": "array", "items": { "$ref": "#/components/schemas/CustomerDto" } }
+    }
+  }
+}
